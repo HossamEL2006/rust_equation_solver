@@ -1,4 +1,4 @@
-use std::ops::{Add, Mul, Neg, Sub};
+use std::{fmt::Display, ops};
 
 struct Unknown {
     name: char,
@@ -13,44 +13,59 @@ enum Expression {
     Neg(Box<Expression>),
 }
 
-impl Add for Expression {
+use Expression::{Add, Mul, Neg, Number, Sub, Variable};
+
+impl ops::Add for Expression {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Expression::Add(Box::new(self), Box::new(rhs))
+        Add(Box::new(self), Box::new(rhs))
     }
 }
 
-impl Sub for Expression {
+impl ops::Sub for Expression {
     type Output = Expression;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Expression::Sub(Box::new(self), Box::new(rhs))
+        Sub(Box::new(self), Box::new(rhs))
     }
 }
 
-impl Mul for Expression {
+impl ops::Mul for Expression {
     type Output = Expression;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        Expression::Mul(Box::new(self), Box::new(rhs))
+        Mul(Box::new(self), Box::new(rhs))
     }
 }
 
-impl Neg for Expression {
+impl ops::Neg for Expression {
     type Output = Expression;
 
     fn neg(self) -> Self::Output {
-        Expression::Neg(Box::new(self))
+        Neg(Box::new(self))
+    }
+}
+
+impl Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Number(n) => write!(f, "{}", n),
+            Variable(unknown) => write!(f, "{}", unknown.name),
+            Add(exp1, exp2) => write!(f, "({} + {})", exp1, exp2),
+            Mul(exp1, exp2) => write!(f, "{}*{}", exp1, exp2),
+            Sub(exp1, exp2) => write!(f, "({} - {})", exp1, exp2),
+            Neg(exp) => write!(f, "-({})", exp),
+        }
     }
 }
 
 fn var(name: char) -> Expression {
-    Expression::Variable(Unknown { name })
+    Variable(Unknown { name })
 }
 
 fn num(n: i32) -> Expression {
-    Expression::Number(n)
+    Number(n)
 }
 
 struct Equation {
@@ -58,13 +73,34 @@ struct Equation {
     right: Expression,
 }
 
-type Problem = Vec<Equation>;
+impl Display for Equation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} = {}", self.left, self.right)
+    }
+}
+
+struct Problem(Vec<Equation>);
+
+impl Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fst_loop = true;
+        for eq in &self.0 {
+            if !fst_loop {
+                writeln!(f)?;
+            } else {
+                fst_loop = false;
+            }
+            write!(f, "{}", eq)?;
+        }
+        Ok(())
+    }
+}
 
 fn main() {
     // Nonlinear system of equations :
     // x(y + z) - yz = xy - 3
     // y(x + z) + xz = 2xz + 5
-    // (x + 1)(y + 1)(z - 2) + (-xyz) = xz - 2x - 1
+    // (x + 1)(y + 1)(z - 2) + -(xyz) = xz - 2x - 1
     // This system has 3 solutions in C^3, but only one in R^3 that happens to
     // also be in N^3
 
@@ -84,6 +120,7 @@ fn main() {
         right: var('x') * var('z') - num(2) * var('x') - num(1),
     };
 
-    let prob: Problem = vec![eq1, eq2, eq3];
+    let prob: Problem = Problem(vec![eq1, eq2, eq3]);
+    println!("{}", prob);
     //TODO : Implement prob.solve_for('x');
 }
