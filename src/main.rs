@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, ops};
+use std::{collections::HashMap, fmt::{Display, write}, ops};
 
 struct Unknown {
     name: char,
@@ -99,6 +99,36 @@ impl ops::Mul for Term {
 
     fn mul(self, rhs: Self) -> Self::Output {
         &self * &rhs
+    }
+}
+
+impl Display for Term {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fully_written_scalar = false;
+        match self.scalar {
+            -1 => write!(f, "-")?,
+            1 => (),
+            _ => {
+                fully_written_scalar = true;
+                write!(f, "{}", self.scalar)?
+            }
+        }
+
+        let mut no_unknowns = true;
+        for (key, val) in &self.unknowns {
+            if *val == 1 {
+                write!(f, "{}", key)?;
+                no_unknowns = false;
+            } else if *val > 1 {
+                write!(f, "{}^{}", key, val)?;
+                no_unknowns = false;
+            }
+        }
+        
+        if !fully_written_scalar & no_unknowns {
+            write!(f, "1")?;
+        }
+        Ok(())
     }
 }
 
@@ -210,9 +240,7 @@ fn main() {
     for eq in &prob.0 {
         for expr in [&eq.left, &eq.right] {
             println!("Terms of {} :", expr);
-            expr.as_terms()
-                .iter()
-                .for_each(|term| println!("{:?}", term));
+            expr.as_terms().iter().for_each(|term| println!("{}", term));
             println!();
         }
     }
