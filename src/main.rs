@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fmt::Display, ops};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    ops,
+};
 
 struct Unknown {
     name: char,
@@ -132,7 +136,26 @@ impl Display for Term {
     }
 }
 
-// TODO : Implement partial equality for terms
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+        fn term_hashmap_partialeq(map1: &HashMap<char, i32>, map2: &HashMap<char, i32>) -> bool {
+            let mut verified_keys: HashSet<char> = HashSet::new();
+            for key in map1.keys().chain(map2.keys()) {
+                if !verified_keys.insert(*key) {
+                    continue;
+                }
+                match (map1.get(key), map2.get(key)) {
+                    (None, Some(n)) | (Some(n), None) if *n != 0 => return false,
+                    (Some(n), Some(m)) if *n != *m => return false,
+                    _ => (),
+                }
+            }
+            true
+        }
+
+        self.scalar == other.scalar && term_hashmap_partialeq(&self.unknowns, &other.unknowns)
+    }
+}
 
 impl Expr {
     fn as_terms(&self) -> Vec<Term> {
@@ -190,7 +213,7 @@ fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
         let mut output = [0; 256];
         map.iter()
             .for_each(|(name, pow)| output[*name as u8 as usize] += pow);
-        // missing error handling for chas as u8
+        // missing error handling for `char as u8`
         // TODO : Change term.name from `char` to `u8`
         output
     }
