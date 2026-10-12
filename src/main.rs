@@ -94,6 +94,14 @@ impl ops::Mul for &Term {
     }
 }
 
+impl ops::Mul for Term {
+    type Output = Term;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        &self * &rhs
+    }
+}
+
 impl Expr {
     fn as_terms(&self) -> Vec<Term> {
         // distributes the expression into a sum of simple terms
