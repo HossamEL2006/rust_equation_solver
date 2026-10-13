@@ -71,9 +71,8 @@ struct Term {
 }
 
 impl Term {
-    fn scale(mut self, n: i32) -> Self {
-        self.scalar *= n;
-        self
+    fn scale(&mut self, n: i32) {
+        self.scalar *= n
     }
 }
 
@@ -173,11 +172,11 @@ impl Expr {
                 .into_iter()
                 .flat_map(Self::as_terms)
                 .collect(),
-            Sub(exp1, exp2) => exp1
-                .as_terms()
-                .into_iter()
-                .chain(exp2.as_terms().into_iter().map(|term| term.scale(-1)))
-                .collect(),
+            Sub(exp1, exp2) => {
+                let mut rhs_terms = exp2.as_terms();
+                rhs_terms.iter_mut().for_each(|term| term.scale(-1));
+                exp1.as_terms().into_iter().chain(rhs_terms).collect()
+            }
             Mul(exp1, exp2) => {
                 let terms1 = &exp1.as_terms();
                 let terms2 = &exp2.as_terms();
@@ -187,11 +186,11 @@ impl Expr {
                     .collect()
                 // Rust analyzer suggested adding the `move` keyword
             }
-            Neg(exp) => exp
-                .as_terms()
-                .into_iter()
-                .map(|term| term.scale(-1))
-                .collect(),
+            Neg(exp) => {
+                let mut terms = exp.as_terms();
+                terms.iter_mut().for_each(|term| term.scale(-1));
+                terms
+            }
         }
     }
 
@@ -253,6 +252,20 @@ fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
 struct Equation {
     left: Expr,
     right: Expr,
+}
+
+impl Equation {
+    fn as_zero_sum_terms(&self) -> Vec<Term> {
+        let mut right_terms = self.right.as_terms();
+        right_terms.iter_mut().for_each(|term| term.scale(-1));
+        let zero_sum_terms = self
+            .left
+            .as_terms()
+            .into_iter()
+            .chain(right_terms)
+            .collect();
+        cancel_zeros(merge_terms(zero_sum_terms))
+    }
 }
 
 impl Display for Equation {
@@ -348,6 +361,24 @@ fn main() {
             .iter()
             .for_each(|term| println!("{}", term));
         println!();
+    }
+
+    println!("***\n");
+
+    println!("Rearranging equations:");
+    for eq in &prob.0 {
+        println!("Rearranged form of {} :", eq);
+        let zero_sum_terms = eq.as_zero_sum_terms();
+        let mut fst_loop = true;
+        for term in zero_sum_terms {
+            if fst_loop {
+                print!("{}", term);
+                fst_loop = false;
+                continue;
+            }
+            print!(" + {}", term);
+        }
+        println!(" = 0\n")
     }
 
     // TODO : Implement string to Equation parsing
