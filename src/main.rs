@@ -64,7 +64,6 @@ impl Display for Expr {
     }
 }
 
-#[derive(Debug, Clone)]
 struct Term {
     scalar: i32,
     unknowns: HashMap<char, i32>,
@@ -249,6 +248,60 @@ fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
     }
 }
 
+fn term_to_expr(term: Term) -> Expr {
+    let mut decomp_unknowns: Vec<Expr> = Vec::new();
+    for (key, val) in term.unknowns {
+        for _ in 0..val {
+            decomp_unknowns.push(var(key));
+        }
+    }
+
+    let l = decomp_unknowns.len();
+
+    let unknowns_expr = match l {
+        0 => num(1),
+        1 => decomp_unknowns.into_iter().next().unwrap(),
+        _ => {
+            let mut decomp_unknowns = decomp_unknowns.into_iter();
+            let fst_unknown = decomp_unknowns.next().unwrap();
+            let snd_unknown = decomp_unknowns.next().unwrap();
+            decomp_unknowns.fold(
+                Mul(Box::new(fst_unknown), Box::new(snd_unknown)),
+                |cuml, exp| Mul(Box::new(cuml), Box::new(exp)),
+            )
+        }
+    };
+
+    match (term.scalar, l) {
+        (0, _) => num(0),
+        (1, _) => unknowns_expr,
+        (-1, _) => Neg(Box::new(unknowns_expr)),
+        (n, 0) => num(n),
+        (n, _) => Mul(Box::new(num(n)), Box::new(unknowns_expr)),
+    }
+}
+
+fn terms_to_expr(terms: Vec<Term>) -> Expr {
+    let l = terms.len();
+
+    match l {
+        0 => num(0),
+        1 => term_to_expr(terms.into_iter().next().unwrap()),
+        _ => {
+            let mut terms_iter = terms.into_iter();
+            let fst_term = terms_iter.next().unwrap();
+            let snd_term = terms_iter.next().unwrap();
+            terms_iter.fold(
+                Add(
+                    Box::new(term_to_expr(fst_term)),
+                    Box::new(term_to_expr(snd_term)),
+                ),
+                |cuml, next_term| Add(Box::new(cuml), Box::new(term_to_expr(next_term))),
+            )
+        }
+    }
+}
+
 struct Equation {
     left: Expr,
     right: Expr,
@@ -266,6 +319,13 @@ impl Equation {
             .collect();
         cancel_zeros(merge_terms(zero_sum_terms))
     }
+
+    fn as_rearranged(&self) -> Equation {
+        Equation {
+            left: terms_to_expr(self.as_zero_sum_terms()),
+            right: num(0),
+        }
+    }
 }
 
 impl Display for Equation {
@@ -275,6 +335,12 @@ impl Display for Equation {
 }
 
 struct Problem(Vec<Equation>);
+
+impl Problem {
+    fn as_rearranged(&self) -> Problem {
+        Problem(self.0.iter().map(|eq| eq.as_rearranged()).collect())
+    }
+}
 
 impl Display for Problem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -365,7 +431,7 @@ fn main() {
 
     println!("***\n");
 
-    println!("Rearranging equations:");
+    println!("Zero sum terms of equations:");
     for eq in &prob.0 {
         println!("Rearranged form of {} :", eq);
         let zero_sum_terms = eq.as_zero_sum_terms();
@@ -380,6 +446,11 @@ fn main() {
         }
         println!(" = 0\n")
     }
+
+    println!("***\n");
+
+    println!("Rearranging the system of equations:");
+    println!("{}", prob.as_rearranged());
 
     // TODO : Implement string to Equation parsing
     // TODO : Implement prob::solve_for(unknown: char)
