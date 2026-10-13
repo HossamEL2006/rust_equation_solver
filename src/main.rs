@@ -156,6 +156,16 @@ impl PartialEq for Term {
 }
 
 impl Expr {
+    fn init_num(n: i32) -> Expr {
+        Number(n)
+    }
+
+    fn init_var(name: char) -> Expr {
+        Variable(Unknown { name })
+    }
+}
+
+impl Expr {
     fn as_terms(&self) -> Vec<Term> {
         // distributes the expression into a sum of simple terms
         match self {
@@ -196,14 +206,6 @@ impl Expr {
     fn as_simp_terms(&self) -> Vec<Term> {
         cancel_zeros(merge_terms(self.as_terms()))
     }
-}
-
-fn var(name: char) -> Expr {
-    Variable(Unknown { name })
-}
-
-fn num(n: i32) -> Expr {
-    Number(n)
 }
 
 fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
@@ -252,14 +254,14 @@ fn term_to_expr(term: Term) -> Expr {
     let mut decomp_unknowns: Vec<Expr> = Vec::new();
     for (key, val) in term.unknowns {
         for _ in 0..val {
-            decomp_unknowns.push(var(key));
+            decomp_unknowns.push(Expr::init_var(key));
         }
     }
 
     let l = decomp_unknowns.len();
 
     let unknowns_expr = match l {
-        0 => num(1),
+        0 => Expr::init_num(1),
         1 => decomp_unknowns.into_iter().next().unwrap(),
         _ => {
             let mut decomp_unknowns = decomp_unknowns.into_iter();
@@ -273,11 +275,11 @@ fn term_to_expr(term: Term) -> Expr {
     };
 
     match (term.scalar, l) {
-        (0, _) => num(0),
+        (0, _) => Expr::init_num(0),
         (1, _) => unknowns_expr,
         (-1, _) => Neg(Box::new(unknowns_expr)),
-        (n, 0) => num(n),
-        (n, _) => Mul(Box::new(num(n)), Box::new(unknowns_expr)),
+        (n, 0) => Expr::init_num(n),
+        (n, _) => Mul(Box::new(Expr::init_num(n)), Box::new(unknowns_expr)),
     }
 }
 
@@ -285,7 +287,7 @@ fn terms_to_expr(terms: Vec<Term>) -> Expr {
     let l = terms.len();
 
     match l {
-        0 => num(0),
+        0 => Expr::init_num(0),
         1 => term_to_expr(terms.into_iter().next().unwrap()),
         _ => {
             let mut terms_iter = terms.into_iter();
@@ -323,7 +325,7 @@ impl Equation {
     fn as_rearranged(&self) -> Equation {
         Equation {
             left: terms_to_expr(self.as_zero_sum_terms()),
-            right: num(0),
+            right: Expr::init_num(0),
         }
     }
 }
@@ -366,6 +368,9 @@ fn main() {
     // also be in N^3
 
     println!("Nonlinear system of equations :");
+
+    let num = Expr::init_num;
+    let var = Expr::init_var;
 
     let eq1 = Equation {
         left: var('x') * (var('y') + var('z')) - var('y') * var('z'),
