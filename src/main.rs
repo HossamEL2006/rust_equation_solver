@@ -4,10 +4,12 @@ use std::{
     ops,
 };
 
+#[derive(Clone)]
 struct Unknown {
     name: char,
 }
 
+#[derive(Clone)]
 enum Expr {
     Number(i32),
     Variable(Unknown),
@@ -64,97 +66,6 @@ impl Display for Expr {
     }
 }
 
-struct Term {
-    scalar: i32,
-    unknowns: HashMap<char, i32>,
-}
-
-impl Term {
-    fn scale(&mut self, n: i32) {
-        self.scalar *= n
-    }
-}
-
-impl ops::Mul for &Term {
-    type Output = Term;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        Term {
-            scalar: self.scalar * rhs.scalar,
-            unknowns: self.unknowns.iter().chain(&rhs.unknowns).fold(
-                HashMap::new(),
-                |mut map, (key, val)| {
-                    map.entry(*key)
-                        .and_modify(|counter| *counter = ops::Add::add(*counter, *val))
-                        /* used `ops::Add::add` instead of `+` to avoid clippy's
-                         * suspicious_arithmetic_impl warning */
-                        .or_insert(*val);
-                    map
-                },
-            ), // Source: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.entry
-        }
-    }
-}
-
-impl ops::Mul for Term {
-    type Output = Term;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        &self * &rhs
-    }
-}
-
-impl Display for Term {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut fully_written_scalar = false;
-        match self.scalar {
-            -1 => write!(f, "-")?,
-            1 => (),
-            _ => {
-                fully_written_scalar = true;
-                write!(f, "{}", self.scalar)?
-            }
-        }
-
-        let mut no_unknowns = true;
-        for (key, val) in &self.unknowns {
-            if *val == 1 {
-                write!(f, "{}", key)?;
-                no_unknowns = false;
-            } else if *val > 1 {
-                write!(f, "{}^{}", key, val)?;
-                no_unknowns = false;
-            }
-        }
-
-        if !fully_written_scalar & no_unknowns {
-            write!(f, "1")?;
-        }
-        Ok(())
-    }
-}
-
-impl PartialEq for Term {
-    fn eq(&self, other: &Self) -> bool {
-        fn term_hashmap_partialeq(map1: &HashMap<char, i32>, map2: &HashMap<char, i32>) -> bool {
-            let mut verified_keys: HashSet<char> = HashSet::new();
-            for key in map1.keys().chain(map2.keys()) {
-                if !verified_keys.insert(*key) {
-                    continue;
-                }
-                match (map1.get(key), map2.get(key)) {
-                    (None, Some(n)) | (Some(n), None) if *n != 0 => return false,
-                    (Some(n), Some(m)) if *n != *m => return false,
-                    _ => (),
-                }
-            }
-            true
-        }
-
-        self.scalar == other.scalar && term_hashmap_partialeq(&self.unknowns, &other.unknowns)
-    }
-}
-
 impl Expr {
     fn init_num(n: i32) -> Expr {
         Number(n)
@@ -171,11 +82,11 @@ impl Expr {
         match self {
             Number(n) => vec![Term {
                 scalar: *n,
-                unknowns: HashMap::new(),
+                unit_term: HashMap::new(),
             }],
             Variable(unknown) => vec![Term {
                 scalar: 1,
-                unknowns: HashMap::from([(unknown.name, 1)]),
+                unit_term: HashMap::from([(unknown.name, 1)]),
             }],
             Add(exp1, exp2) => [&**exp1, &**exp2]
                 .into_iter()
@@ -208,10 +119,105 @@ impl Expr {
     }
 }
 
+type UnitTerm = HashMap<char, i32>;
+
+struct Term {
+    scalar: i32,
+    unit_term: UnitTerm,
+}
+
+impl Term {
+    fn scale(&mut self, n: i32) {
+        self.scalar *= n
+    }
+}
+
+impl ops::Mul for &Term {
+    type Output = Term;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Term {
+            scalar: self.scalar * rhs.scalar,
+            unit_term: self.unit_term.iter().chain(&rhs.unit_term).fold(
+                HashMap::new(),
+                |mut unit_term: UnitTerm, (key, val)| {
+                    unit_term
+                        .entry(*key)
+                        .and_modify(|counter| *counter = ops::Add::add(*counter, *val))
+                        /* used `ops::Add::add` instead of `+` to avoid clippy's
+                         * suspicious_arithmetic_impl warning */
+                        .or_insert(*val);
+                    unit_term
+                },
+            ), // Source: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.entry
+        }
+    }
+}
+
+impl ops::Mul for Term {
+    type Output = Term;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        &self * &rhs
+    }
+}
+
+impl Display for Term {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fully_written_scalar = false;
+        match self.scalar {
+            -1 => write!(f, "-")?,
+            1 => (),
+            _ => {
+                fully_written_scalar = true;
+                write!(f, "{}", self.scalar)?
+            }
+        }
+
+        let mut no_unknowns = true;
+        for (key, val) in &self.unit_term {
+            if *val == 1 {
+                write!(f, "{}", key)?;
+                no_unknowns = false;
+            } else if *val > 1 {
+                write!(f, "{}^{}", key, val)?;
+                no_unknowns = false;
+            }
+        }
+
+        if !fully_written_scalar & no_unknowns {
+            write!(f, "1")?;
+        }
+        Ok(())
+    }
+}
+
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+        self.scalar == other.scalar && unit_term_partialeq(&self.unit_term, &other.unit_term)
+    }
+}
+
+fn unit_term_partialeq(unit_term1: &UnitTerm, unit_term2: &UnitTerm) -> bool {
+    let mut verified_keys: HashSet<char> = HashSet::new();
+    for key in unit_term1.keys().chain(unit_term2.keys()) {
+        if !verified_keys.insert(*key) {
+            continue;
+        }
+        match (unit_term1.get(key), unit_term2.get(key)) {
+            (None, Some(n)) | (Some(n), None) if *n != 0 => return false,
+            (Some(n), Some(m)) if *n != *m => return false,
+            _ => (),
+        }
+    }
+    true
+}
+
 fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
-    fn term_hashmap_to_arr(map: &HashMap<char, i32>) -> [i32; 256] {
+    fn unit_term_to_arr(unit_term: &UnitTerm) -> [i32; 256] {
         let mut output = [0; 256];
-        map.iter()
+        unit_term
+            .iter()
             .for_each(|(name, pow)| output[*name as u8 as usize] += pow);
         // missing error handling for `char as u8`
         // TODO : Change term.name from `char` to `u8`
@@ -223,7 +229,7 @@ fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
     let mut counter = 0;
 
     for term in terms {
-        let term_arr: [i32; 256] = term_hashmap_to_arr(&term.unknowns);
+        let term_arr: [i32; 256] = unit_term_to_arr(&term.unit_term);
         if let Some(idx) = term_indicies_map.get(&term_arr) {
             simplified_terms[*idx].scalar += term.scalar;
             // error should not occur in theory
@@ -243,7 +249,7 @@ fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
     if output.is_empty() {
         vec![Term {
             scalar: 0,
-            unknowns: HashMap::new(),
+            unit_term: HashMap::new(),
         }]
     } else {
         output
@@ -251,24 +257,24 @@ fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
 }
 
 fn term_to_expr(term: Term) -> Expr {
-    let mut decomp_unknowns: Vec<Expr> = Vec::new();
-    for (key, val) in term.unknowns {
+    let mut decomp_unit_term: Vec<Expr> = Vec::new();
+    for (key, val) in term.unit_term {
         for _ in 0..val {
-            decomp_unknowns.push(Expr::init_var(key));
+            decomp_unit_term.push(Expr::init_var(key));
         }
     }
 
-    let l = decomp_unknowns.len();
+    let l = decomp_unit_term.len();
 
-    let unknowns_expr = match l {
+    let unit_terms_expr = match l {
         0 => Expr::init_num(1),
-        1 => decomp_unknowns.into_iter().next().unwrap(),
+        1 => decomp_unit_term.into_iter().next().unwrap(),
         _ => {
-            let mut decomp_unknowns = decomp_unknowns.into_iter();
-            let fst_unknown = decomp_unknowns.next().unwrap();
-            let snd_unknown = decomp_unknowns.next().unwrap();
-            decomp_unknowns.fold(
-                Mul(Box::new(fst_unknown), Box::new(snd_unknown)),
+            let mut decomp_unit_term = decomp_unit_term.into_iter();
+            let fst_unit_term = decomp_unit_term.next().unwrap();
+            let snd_unit_term = decomp_unit_term.next().unwrap();
+            decomp_unit_term.fold(
+                Mul(Box::new(fst_unit_term), Box::new(snd_unit_term)),
                 |cuml, exp| Mul(Box::new(cuml), Box::new(exp)),
             )
         }
@@ -276,10 +282,10 @@ fn term_to_expr(term: Term) -> Expr {
 
     match (term.scalar, l) {
         (0, _) => Expr::init_num(0),
-        (1, _) => unknowns_expr,
-        (-1, _) => Neg(Box::new(unknowns_expr)),
+        (1, _) => unit_terms_expr,
+        (-1, _) => Neg(Box::new(unit_terms_expr)),
         (n, 0) => Expr::init_num(n),
-        (n, _) => Mul(Box::new(Expr::init_num(n)), Box::new(unknowns_expr)),
+        (n, _) => Mul(Box::new(Expr::init_num(n)), Box::new(unit_terms_expr)),
     }
 }
 
@@ -304,13 +310,14 @@ fn terms_to_expr(terms: Vec<Term>) -> Expr {
     }
 }
 
+#[derive(Clone)]
 struct Equation {
     left: Expr,
     right: Expr,
 }
 
 impl Equation {
-    fn as_zero_sum_terms(&self) -> Vec<Term> {
+    fn as_zero_sum_simp_terms(&self) -> Vec<Term> {
         let mut right_terms = self.right.as_terms();
         right_terms.iter_mut().for_each(|term| term.scale(-1));
         let zero_sum_terms = self
@@ -322,10 +329,39 @@ impl Equation {
         cancel_zeros(merge_terms(zero_sum_terms))
     }
 
-    fn as_rearranged(&self) -> Equation {
+    fn as_rearranged_simp(&self) -> Equation {
         Equation {
-            left: terms_to_expr(self.as_zero_sum_terms()),
+            left: terms_to_expr(self.as_zero_sum_simp_terms()),
             right: Expr::init_num(0),
+        }
+    }
+
+    fn isolate(&mut self, unit_term: UnitTerm) -> Result<(), ()> {
+        let terms: Vec<Term> = self.as_zero_sum_simp_terms();
+
+        self.right = Expr::init_num(0);
+
+        // search for the term to islolate
+        let mut other_terms: Vec<Term> = Vec::new();
+        let mut term_to_isolate: Option<Term> = None;
+
+        for term in terms {
+            if !unit_term_partialeq(&unit_term, &term.unit_term) {
+                other_terms.push(term);
+            } else if term_to_isolate.is_none() {
+                term_to_isolate = Some(term);
+            } else {
+                panic!("Unexpected panic: `terms` shouldn't have duplicate unit terms");
+            }
+        }
+
+        if let Some(term) = term_to_isolate {
+            self.left = term_to_expr(term);
+            other_terms.iter_mut().for_each(|term| term.scale(-1));
+            self.right = terms_to_expr(other_terms);
+            Ok(())
+        } else {
+            Err(())
         }
     }
 }
@@ -340,7 +376,7 @@ struct Problem(Vec<Equation>);
 
 impl Problem {
     fn as_rearranged(&self) -> Problem {
-        Problem(self.0.iter().map(|eq| eq.as_rearranged()).collect())
+        Problem(self.0.iter().map(|eq| eq.as_rearranged_simp()).collect())
     }
 }
 
@@ -436,10 +472,10 @@ fn main() {
 
     println!("***\n");
 
-    println!("Zero sum terms of equations:");
+    println!("Zero sum terms of equations :");
     for eq in &prob.0 {
         println!("Rearranged form of {} :", eq);
-        let zero_sum_terms = eq.as_zero_sum_terms();
+        let zero_sum_terms = eq.as_zero_sum_simp_terms();
         let mut fst_loop = true;
         for term in zero_sum_terms {
             if fst_loop {
@@ -454,8 +490,26 @@ fn main() {
 
     println!("***\n");
 
-    println!("Rearranging the system of equations:");
+    println!("Rearranging the system of equations :");
     println!("{}", prob.as_rearranged());
+
+    println!("\n***\n");
+
+    println!("Isolating terms :");
+
+    for eq in &prob.0 {
+        println!("Isolating terms of {} :", eq);
+        let mut cloned_eq = eq.clone();
+
+        cloned_eq = cloned_eq.as_rearranged_simp();
+
+        for term in cloned_eq.left.as_simp_terms() {
+            let mut original_clone = eq.clone();
+            let _ = original_clone.isolate(term.unit_term);
+            println!("{}", original_clone);
+        }
+        println!();
+    }
 
     // TODO : Implement string to Equation parsing
     // TODO : Implement prob::solve_for(unknown: char)
