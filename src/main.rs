@@ -336,10 +336,8 @@ impl Equation {
         }
     }
 
-    fn isolate(&mut self, unit_term: UnitTerm) -> Result<(), ()> {
+    fn as_isolated(&self, unit_term: UnitTerm) -> Option<Self> {
         let terms: Vec<Term> = self.as_zero_sum_simp_terms();
-
-        self.right = Expr::init_num(0);
 
         // search for the term to islolate
         let mut other_terms: Vec<Term> = Vec::new();
@@ -355,14 +353,12 @@ impl Equation {
             }
         }
 
-        if let Some(term) = term_to_isolate {
-            self.left = term_to_expr(term);
-            other_terms.iter_mut().for_each(|term| term.scale(-1));
-            self.right = terms_to_expr(other_terms);
-            Ok(())
-        } else {
-            Err(())
-        }
+        other_terms.iter_mut().for_each(|term| term.scale(-1));
+
+        term_to_isolate.map(|term| Equation {
+            left: term_to_expr(term),
+            right: terms_to_expr(other_terms),
+        })
     }
 }
 
@@ -475,8 +471,8 @@ fn main() {
     println!("Zero sum terms of equations :");
     for eq in &prob.0 {
         println!("Rearranged form of {} :", eq);
-        let zero_sum_terms = eq.as_zero_sum_simp_terms();
-        let mut fst_loop = true;
+        let zero_sum_terms: Vec<Term> = eq.as_zero_sum_simp_terms();
+        let mut fst_loop: bool = true;
         for term in zero_sum_terms {
             if fst_loop {
                 print!("{}", term);
@@ -499,14 +495,12 @@ fn main() {
 
     for eq in &prob.0 {
         println!("Isolating terms of {} :", eq);
-        let mut cloned_eq = eq.clone();
 
-        cloned_eq = cloned_eq.as_rearranged_simp();
+        let left_side: Expr = eq.as_rearranged_simp().left;
 
-        for term in cloned_eq.left.as_simp_terms() {
-            let mut original_clone = eq.clone();
-            let _ = original_clone.isolate(term.unit_term);
-            println!("{}", original_clone);
+        for term in left_side.as_simp_terms() {
+            let isolated_eq: Equation = eq.as_isolated(term.unit_term).unwrap();
+            println!("{}", isolated_eq);
         }
         println!();
     }
