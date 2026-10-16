@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
-    ops,
+    ops, slice, vec,
 };
 
 #[derive(Clone, PartialEq)]
@@ -93,22 +93,24 @@ impl Expr {
                 .flat_map(Self::as_terms)
                 .collect(),
             Sub(exp1, exp2) => {
-                let mut rhs_terms = exp2.as_terms();
-                rhs_terms.iter_mut().for_each(|term| term.scale(-1));
+                let mut rhs_terms: Vec<Term> = exp2.as_terms();
+                rhs_terms
+                    .iter_mut()
+                    .for_each(|term: &mut Term| term.scale(-1));
                 exp1.as_terms().into_iter().chain(rhs_terms).collect()
             }
             Mul(exp1, exp2) => {
-                let terms1 = &exp1.as_terms();
-                let terms2 = &exp2.as_terms();
+                let terms1: &Vec<Term> = &exp1.as_terms();
+                let terms2: &Vec<Term> = &exp2.as_terms();
                 terms1
                     .iter()
-                    .flat_map(|term1| terms2.iter().map(move |term2| term1 * term2))
+                    .flat_map(|term1: &Term| terms2.iter().map(move |term2: &Term| term1 * term2))
                     .collect()
                 // Rust analyzer suggested adding the `move` keyword
             }
             Neg(exp) => {
-                let mut terms = exp.as_terms();
-                terms.iter_mut().for_each(|term| term.scale(-1));
+                let mut terms: Vec<Term> = exp.as_terms();
+                terms.iter_mut().for_each(|term: &mut Term| term.scale(-1));
                 terms
             }
         }
@@ -146,10 +148,10 @@ impl ops::Mul for &Term {
             scalar: self.scalar * rhs.scalar,
             unit_term: self.unit_term.iter().chain(&rhs.unit_term).fold(
                 HashMap::new(),
-                |mut unit_term: UnitTerm, (key, val)| {
+                |mut unit_term: UnitTerm, (key, val): (&char, &i32)| {
                     unit_term
                         .entry(*key)
-                        .and_modify(|counter| *counter = ops::Add::add(*counter, *val))
+                        .and_modify(|counter: &mut i32| *counter = ops::Add::add(*counter, *val))
                         /* used `ops::Add::add` instead of `+` to avoid clippy's
                          * suspicious_arithmetic_impl warning */
                         .or_insert(*val);
@@ -170,7 +172,7 @@ impl ops::Mul for Term {
 
 impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut fully_written_scalar = false;
+        let mut fully_written_scalar: bool = false;
         match self.scalar {
             -1 => write!(f, "-")?,
             1 => (),
@@ -180,7 +182,7 @@ impl Display for Term {
             }
         }
 
-        let mut no_unknowns = true;
+        let mut no_unknowns: bool = true;
         for (key, val) in &self.unit_term {
             if *val == 1 {
                 write!(f, "{}", key)?;
@@ -221,7 +223,7 @@ fn unit_term_partialeq(unit_term1: &UnitTerm, unit_term2: &UnitTerm) -> bool {
 
 fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
     fn unit_term_to_arr(unit_term: &UnitTerm) -> [i32; 256] {
-        let mut output = [0; 256];
+        let mut output: [i32; 256] = [0; 256];
         unit_term
             .iter()
             .for_each(|(name, pow)| output[*name as u8 as usize] += pow);
@@ -232,7 +234,7 @@ fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
 
     let mut term_indicies_map: HashMap<[i32; 256], usize> = HashMap::new();
     let mut simplified_terms: Vec<Term> = Vec::new();
-    let mut counter = 0;
+    let mut counter: usize = 0;
 
     for term in terms {
         let term_arr: [i32; 256] = unit_term_to_arr(&term.unit_term);
@@ -251,7 +253,10 @@ fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
 }
 
 fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
-    let output: Vec<Term> = terms.into_iter().filter(|term| term.scalar != 0).collect();
+    let output: Vec<Term> = terms
+        .into_iter()
+        .filter(|term: &Term| term.scalar != 0)
+        .collect();
     if output.is_empty() {
         vec![Term {
             scalar: 0,
@@ -270,18 +275,18 @@ fn term_to_expr(term: &Term) -> Expr {
         }
     }
 
-    let l = decomp_unit_term.len();
+    let l: usize = decomp_unit_term.len();
 
-    let unit_terms_expr = match l {
+    let unit_terms_expr: Expr = match l {
         0 => Expr::init_num(1),
         1 => decomp_unit_term.into_iter().next().unwrap(),
         _ => {
-            let mut decomp_unit_term = decomp_unit_term.into_iter();
-            let fst_unit_term = decomp_unit_term.next().unwrap();
-            let snd_unit_term = decomp_unit_term.next().unwrap();
+            let mut decomp_unit_term: vec::IntoIter<Expr> = decomp_unit_term.into_iter();
+            let fst_unit_term: Expr = decomp_unit_term.next().unwrap();
+            let snd_unit_term: Expr = decomp_unit_term.next().unwrap();
             decomp_unit_term.fold(
                 Mul(Box::new(fst_unit_term), Box::new(snd_unit_term)),
-                |cuml, exp| Mul(Box::new(cuml), Box::new(exp)),
+                |cuml: Expr, exp: Expr| Mul(Box::new(cuml), Box::new(exp)),
             )
         }
     };
@@ -297,40 +302,43 @@ fn term_to_expr(term: &Term) -> Expr {
 
 fn terms_to_expr(terms: &[Term]) -> Expr {
     // Clippy suggested changing the type of `terms` form `&Vec<Term>` to `&[Term]`
-    let l = terms.len();
-
-    match l {
+    match terms.len() {
         0 => Expr::init_num(0),
         1 => term_to_expr(terms.iter().next().unwrap()),
         _ => {
-            let mut terms_iter = terms.iter();
-            let fst_term = terms_iter.next().unwrap();
-            let snd_term = terms_iter.next().unwrap();
+            let mut terms_iter: slice::Iter<'_, Term> = terms.iter();
+            let fst_term: &Term = terms_iter.next().unwrap();
+            let snd_term: &Term = terms_iter.next().unwrap();
             terms_iter.fold(
                 Add(
                     Box::new(term_to_expr(fst_term)),
                     Box::new(term_to_expr(snd_term)),
                 ),
-                |cuml, next_term| Add(Box::new(cuml), Box::new(term_to_expr(next_term))),
+                |cuml: Expr, next_term: &Term| {
+                    Add(Box::new(cuml), Box::new(term_to_expr(next_term)))
+                },
             )
         }
     }
 }
 
-fn isolate_from_zero_sum_terms(terms: Vec<Term>, termmm: &Term) -> Option<Vec<Term>> {
+fn isolate_from_zero_sum_terms(
+    terms: Vec<Term>,
+    term_sought_to_isolate: &Term,
+) -> Option<Vec<Term>> {
     let terms: Vec<Term> = cancel_zeros(merge_terms(terms));
     let mut other_terms: Vec<Term> = Vec::new();
     let mut term_to_isolate: Option<Term> = None;
-    let mut multiplying_factor = 1;
+    let mut multiplying_factor: i32 = 1;
 
     for term in terms {
-        if !unit_term_partialeq(&termmm.unit_term, &term.unit_term) {
+        if !unit_term_partialeq(&term_sought_to_isolate.unit_term, &term.unit_term) {
             other_terms.push(term);
         } else if term_to_isolate.is_none() {
-            if termmm.scalar % term.scalar != 0 {
+            if term_sought_to_isolate.scalar % term.scalar != 0 {
                 return None;
             }
-            multiplying_factor = termmm.scalar / term.scalar;
+            multiplying_factor = term_sought_to_isolate.scalar / term.scalar;
             term_to_isolate = Some(term);
         } else {
             panic!("Unexpected panic: `terms` shouldn't have duplicate unit terms");
@@ -339,7 +347,7 @@ fn isolate_from_zero_sum_terms(terms: Vec<Term>, termmm: &Term) -> Option<Vec<Te
 
     other_terms
         .iter_mut()
-        .for_each(|term| term.scale(-multiplying_factor));
+        .for_each(|term: &mut Term| term.scale(-multiplying_factor));
 
     term_to_isolate.map(|_| other_terms)
 }
@@ -364,9 +372,11 @@ struct Equation {
 
 impl Equation {
     fn as_zero_sum_simp_terms(&self) -> Vec<Term> {
-        let mut right_terms = self.right.as_terms();
-        right_terms.iter_mut().for_each(|term| term.scale(-1));
-        let zero_sum_terms = self
+        let mut right_terms: Vec<Term> = self.right.as_terms();
+        right_terms
+            .iter_mut()
+            .for_each(|term: &mut Term| term.scale(-1));
+        let zero_sum_terms: Vec<Term> = self
             .left
             .as_terms()
             .into_iter()
@@ -381,31 +391,6 @@ impl Equation {
             right: Expr::init_num(0),
         }
     }
-
-    fn as_isolated(&self, unit_term: &UnitTerm) -> Option<Self> {
-        let terms: Vec<Term> = self.as_zero_sum_simp_terms();
-
-        // search for the term to islolate
-        let mut other_terms: Vec<Term> = Vec::new();
-        let mut term_to_isolate: Option<Term> = None;
-
-        for term in terms {
-            if !unit_term_partialeq(unit_term, &term.unit_term) {
-                other_terms.push(term);
-            } else if term_to_isolate.is_none() {
-                term_to_isolate = Some(term);
-            } else {
-                panic!("Unexpected panic: `terms` shouldn't have duplicate unit terms");
-            }
-        }
-
-        other_terms.iter_mut().for_each(|term| term.scale(-1));
-
-        term_to_isolate.map(|term| Equation {
-            left: term_to_expr(&term),
-            right: terms_to_expr(&other_terms),
-        })
-    }
 }
 
 impl Display for Equation {
@@ -418,13 +403,18 @@ struct Problem(Vec<Equation>);
 
 impl Problem {
     fn as_rearranged(&self) -> Problem {
-        Problem(self.0.iter().map(|eq| eq.as_rearranged_simp()).collect())
+        Problem(
+            self.0
+                .iter()
+                .map(|eq: &Equation| eq.as_rearranged_simp())
+                .collect(),
+        )
     }
 }
 
 impl Display for Problem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut fst_loop = true;
+        let mut fst_loop: bool = true;
         for eq in &self.0 {
             if !fst_loop {
                 writeln!(f)?;
@@ -447,20 +437,20 @@ fn main() {
 
     println!("Nonlinear system of equations :");
 
-    let num = Expr::init_num;
-    let var = Expr::init_var;
+    let num: fn(i32) -> Expr = Expr::init_num;
+    let var: fn(char) -> Expr = Expr::init_var;
 
-    let eq1 = Equation {
+    let eq1: Equation = Equation {
         left: var('x') * (var('y') + var('z')) - var('y') * var('z'),
         right: var('x') * var('y') - num(3),
     };
 
-    let eq2 = Equation {
+    let eq2: Equation = Equation {
         left: var('y') * (var('x') + var('z')) + var('x') * var('z'),
         right: num(2) * var('x') * var('z') + num(5),
     };
 
-    let eq3 = Equation {
+    let eq3: Equation = Equation {
         left: (var('x') + num(1)) * (var('y') + num(1)) * (var('z') - num(2))
             + -(var('x') * var('y') * var('z')),
         right: var('x') * var('z') - num(2) * var('x') - num(1),
@@ -476,14 +466,12 @@ fn main() {
     for eq in &prob.0 {
         for expr in [&eq.left, &eq.right] {
             println!("Simplified terms of {} :", expr);
-            expr.as_simp_terms()
-                .iter()
-                .for_each(|term| println!("{}", term));
+            print_terms(&expr.as_simp_terms());
             println!();
         }
     }
 
-    println!("***\n");
+    println!("\n***\n");
 
     println!("Gemini-generated edge cases :");
 
@@ -506,13 +494,11 @@ fn main() {
 
     for expr in edge_cases {
         println!("Simplified terms of {} :", expr);
-        expr.as_simp_terms()
-            .iter()
-            .for_each(|term| println!("{}", term));
+        print_terms(&expr.as_simp_terms());
         println!();
     }
 
-    println!("***\n");
+    println!("\n***\n");
 
     println!("Zero sum terms of equations :");
     for eq in &prob.0 {
@@ -534,11 +520,14 @@ fn main() {
     for eq in &prob.0 {
         println!("Isolating terms of {} :", eq);
 
-        let left_side: Expr = eq.as_rearranged_simp().left;
+        let zero_sum_terms: Vec<Term> = eq.as_zero_sum_simp_terms();
 
-        for term in left_side.as_simp_terms() {
-            let isolated_eq: Equation = eq.as_isolated(&term.unit_term).unwrap();
-            println!("{}", isolated_eq);
+        for term_to_isolate in &zero_sum_terms {
+            let rhs_terms: Vec<Term> =
+                isolate_from_zero_sum_terms(zero_sum_terms.clone(), term_to_isolate).unwrap();
+            print!("{} = ", term_to_isolate);
+            print_terms(&rhs_terms);
+            println!();
         }
         println!();
     }
@@ -547,14 +536,15 @@ fn main() {
 
     println!("Manually solving the problem :");
 
-    let terms_eq1 = prob.0[0].as_zero_sum_simp_terms();
+    let terms_eq1: Vec<Term> = prob.0[0].as_zero_sum_simp_terms();
     print_terms(&terms_eq1);
     println!(" = 0");
 
-    let term_to_isolate = terms_eq1[0].clone().into_scaled(-1);
-    let replacement_terms = isolate_from_zero_sum_terms(terms_eq1, &term_to_isolate).unwrap();
+    let term_to_isolate: Term = terms_eq1[0].clone().into_scaled(-1);
+    let replacement_terms: Vec<Term> =
+        isolate_from_zero_sum_terms(terms_eq1, &term_to_isolate).unwrap();
 
-    let terms_eq2 = prob.0[1].as_zero_sum_simp_terms();
+    let terms_eq2: Vec<Term> = prob.0[1].as_zero_sum_simp_terms();
     print_terms(&terms_eq2);
     println!(" = 0");
 
@@ -562,9 +552,9 @@ fn main() {
     print_terms(&replacement_terms);
     println!(" in equation 2 :");
 
-    let terms_eq2v2 = terms_eq2
+    let terms_eq2v2: Vec<Term> = terms_eq2
         .into_iter()
-        .flat_map(|term| {
+        .flat_map(|term: Term| {
             if term == term_to_isolate {
                 replacement_terms.clone()
             } else {
