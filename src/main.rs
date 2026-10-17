@@ -83,11 +83,11 @@ impl Expr {
         match self {
             Number(n) => vec![Term {
                 scalar: *n,
-                unit_term: HashMap::new(),
+                unit_term: UnitTerm(HashMap::new()),
             }],
             Variable(unknown) => vec![Term {
                 scalar: 1,
-                unit_term: HashMap::from([(unknown.name, 1)]),
+                unit_term: UnitTerm(HashMap::from([(unknown.name, 1)])),
             }],
             Add(exp1, exp2) => [&**exp1, &**exp2]
                 .into_iter()
@@ -122,7 +122,58 @@ impl Expr {
     }
 }
 
-type UnitTerm = HashMap<char, i32>;
+#[derive(Clone)]
+struct UnitTerm(HashMap<char, i32>);
+
+impl PartialEq for UnitTerm {
+    fn eq(&self, other: &Self) -> bool {
+        let mut verified_keys: HashSet<char> = HashSet::new();
+        for key in self.0.keys().chain(other.0.keys()) {
+            if !verified_keys.insert(*key) {
+                continue;
+            }
+            match (self.0.get(key), other.0.get(key)) {
+                (None, Some(n)) | (Some(n), None) if *n != 0 => return false,
+                (Some(n), Some(m)) if *n != *m => return false,
+                _ => (),
+            }
+        }
+        true
+    }
+}
+
+impl ops::Mul for &UnitTerm {
+    type Output = UnitTerm;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        UnitTerm(
+            self.0.iter().chain(&rhs.0).fold(
+                HashMap::new(),
+                |mut unit_term, (key, val): (&char, &i32)| {
+                    unit_term
+                        .entry(*key)
+                        .and_modify(|counter: &mut i32| *counter = ops::Add::add(*counter, *val))
+                        /* used `ops::Add::add` instead of `+` to avoid clippy's
+                         * suspicious_arithmetic_impl warning */
+                        .or_insert(*val);
+                    unit_term
+                },
+            ), // Source: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.entry
+        )
+    }
+}
+
+impl UnitTerm {
+    fn as_power_array(&self) -> [i32; 256] {
+        let mut output: [i32; 256] = [0; 256];
+        self.0
+            .iter()
+            .for_each(|(name, pow)| output[*name as u8 as usize] += pow);
+        // missing error handling for `char as u8`
+        // TODO : Change term.name from `char` to `u8`
+        output
+    }
+}
 
 #[derive(Clone)]
 struct Term {
@@ -147,18 +198,7 @@ impl ops::Mul for &Term {
     fn mul(self, rhs: Self) -> Self::Output {
         Term {
             scalar: self.scalar * rhs.scalar,
-            unit_term: self.unit_term.iter().chain(&rhs.unit_term).fold(
-                HashMap::new(),
-                |mut unit_term: UnitTerm, (key, val): (&char, &i32)| {
-                    unit_term
-                        .entry(*key)
-                        .and_modify(|counter: &mut i32| *counter = ops::Add::add(*counter, *val))
-                        /* used `ops::Add::add` instead of `+` to avoid clippy's
-                         * suspicious_arithmetic_impl warning */
-                        .or_insert(*val);
-                    unit_term
-                },
-            ), // Source: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.entry
+            unit_term: &self.unit_term * &rhs.unit_term,
         }
     }
 }
@@ -184,7 +224,7 @@ impl Display for Term {
         }
 
         let mut no_unknowns: bool = true;
-        for (key, val) in &self.unit_term {
+        for (key, val) in &self.unit_term.0 {
             if *val == 1 {
                 write!(f, "{}", key)?;
                 no_unknowns = false;
@@ -203,42 +243,17 @@ impl Display for Term {
 
 impl PartialEq for Term {
     fn eq(&self, other: &Self) -> bool {
-        self.scalar == other.scalar && unit_term_partialeq(&self.unit_term, &other.unit_term)
+        self.scalar == other.scalar && self.unit_term == other.unit_term
     }
-}
-
-fn unit_term_partialeq(unit_term1: &UnitTerm, unit_term2: &UnitTerm) -> bool {
-    let mut verified_keys: HashSet<char> = HashSet::new();
-    for key in unit_term1.keys().chain(unit_term2.keys()) {
-        if !verified_keys.insert(*key) {
-            continue;
-        }
-        match (unit_term1.get(key), unit_term2.get(key)) {
-            (None, Some(n)) | (Some(n), None) if *n != 0 => return false,
-            (Some(n), Some(m)) if *n != *m => return false,
-            _ => (),
-        }
-    }
-    true
 }
 
 fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
-    fn unit_term_to_arr(unit_term: &UnitTerm) -> [i32; 256] {
-        let mut output: [i32; 256] = [0; 256];
-        unit_term
-            .iter()
-            .for_each(|(name, pow)| output[*name as u8 as usize] += pow);
-        // missing error handling for `char as u8`
-        // TODO : Change term.name from `char` to `u8`
-        output
-    }
-
     let mut term_indicies_map: HashMap<[i32; 256], usize> = HashMap::new();
     let mut simplified_terms: Vec<Term> = Vec::new();
     let mut counter: usize = 0;
 
     for term in terms {
-        let term_arr: [i32; 256] = unit_term_to_arr(&term.unit_term);
+        let term_arr: [i32; 256] = term.unit_term.as_power_array();
         if let Some(idx) = term_indicies_map.get(&term_arr) {
             simplified_terms[*idx].scalar += term.scalar;
             // error should not occur in theory
@@ -261,7 +276,7 @@ fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
     if output.is_empty() {
         vec![Term {
             scalar: 0,
-            unit_term: HashMap::new(),
+            unit_term: UnitTerm(HashMap::new()),
         }]
     } else {
         output
@@ -270,7 +285,7 @@ fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
 
 fn term_to_expr(term: &Term) -> Expr {
     let mut decomp_unit_term: Vec<Expr> = Vec::new();
-    for (key, val) in &term.unit_term {
+    for (key, val) in &term.unit_term.0 {
         for _ in 0..*val {
             decomp_unit_term.push(Expr::init_var(*key));
         }
@@ -335,7 +350,7 @@ fn as_isolated_from_zero_sum_terms(
     let mut multiplying_factor: i32 = 1;
 
     for term in terms {
-        if !unit_term_partialeq(&term_sought_to_isolate.unit_term, &term.unit_term) {
+        if term_sought_to_isolate.unit_term != term.unit_term {
             other_terms.push(term.clone());
         } else if term_to_isolate.is_none() {
             if term_sought_to_isolate.scalar % term.scalar != 0 {
@@ -356,10 +371,10 @@ fn as_isolated_from_zero_sum_terms(
 }
 
 fn get_unit_term_coef(unit_term: &UnitTerm, terms: &Vec<Term>) -> Option<i32> {
-    let mut output = None;
+    let mut output: Option<i32> = None;
 
     for term in terms {
-        if unit_term_partialeq(&term.unit_term, unit_term) {
+        if &term.unit_term == unit_term {
             if output.is_some() {
                 panic!("Non simplified list of terms");
             }
@@ -629,7 +644,7 @@ fn main() {
             //       This will avoid the clone above
             .into_iter()
             .flat_map(|term: Term| {
-                if unit_term_partialeq(&term.unit_term, &unit_term_to_replace) {
+                if term.unit_term == unit_term_to_replace {
                     get_replacement_terms()
                 } else {
                     vec![term]
