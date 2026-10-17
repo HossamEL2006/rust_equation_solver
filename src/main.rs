@@ -1,3 +1,4 @@
+use num::integer::lcm;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
@@ -322,24 +323,26 @@ fn terms_to_expr(terms: &[Term]) -> Expr {
     }
 }
 
-fn isolate_from_zero_sum_terms(
-    terms: Vec<Term>,
+// TODO : Refactor into ZeroSumTerms::as_isolated
+// Must have a `simplified` field to check if the terms are simplified
+fn as_isolated_from_zero_sum_terms(
+    terms: &Vec<Term>,
     term_sought_to_isolate: &Term,
 ) -> Option<Vec<Term>> {
-    let terms: Vec<Term> = cancel_zeros(merge_terms(terms));
+    // let terms: Vec<Term> = cancel_zeros(merge_terms(terms));
     let mut other_terms: Vec<Term> = Vec::new();
     let mut term_to_isolate: Option<Term> = None;
     let mut multiplying_factor: i32 = 1;
 
     for term in terms {
         if !unit_term_partialeq(&term_sought_to_isolate.unit_term, &term.unit_term) {
-            other_terms.push(term);
+            other_terms.push(term.clone());
         } else if term_to_isolate.is_none() {
             if term_sought_to_isolate.scalar % term.scalar != 0 {
                 return None;
             }
             multiplying_factor = term_sought_to_isolate.scalar / term.scalar;
-            term_to_isolate = Some(term);
+            term_to_isolate = Some(term.clone());
         } else {
             panic!("Unexpected panic: `terms` shouldn't have duplicate unit terms");
         }
@@ -350,6 +353,21 @@ fn isolate_from_zero_sum_terms(
         .for_each(|term: &mut Term| term.scale(-multiplying_factor));
 
     term_to_isolate.map(|_| other_terms)
+}
+
+fn get_unit_term_coef(unit_term: &UnitTerm, terms: &Vec<Term>) -> Option<i32> {
+    let mut output = None;
+
+    for term in terms {
+        if unit_term_partialeq(&term.unit_term, unit_term) {
+            if output.is_some() {
+                panic!("Non simplified list of terms");
+            }
+            output = Some(term.scalar)
+        }
+    }
+
+    output
 }
 
 fn print_terms(terms: &Vec<Term>) {
@@ -524,7 +542,7 @@ fn main() {
 
         for term_to_isolate in &zero_sum_terms {
             let rhs_terms: Vec<Term> =
-                isolate_from_zero_sum_terms(zero_sum_terms.clone(), term_to_isolate).unwrap();
+                as_isolated_from_zero_sum_terms(&zero_sum_terms, term_to_isolate).unwrap();
             print!("{} = ", term_to_isolate);
             print_terms(&rhs_terms);
             println!();
@@ -536,40 +554,96 @@ fn main() {
 
     println!("Manually solving the problem :");
 
-    let terms_eq1: Vec<Term> = prob.0[0].as_zero_sum_simp_terms();
-    print_terms(&terms_eq1);
-    println!(" = 0");
+    println!("Initial problem :");
 
-    let term_to_isolate: Term = terms_eq1[0].clone().into_scaled(-1);
-    let replacement_terms: Vec<Term> =
-        isolate_from_zero_sum_terms(terms_eq1, &term_to_isolate).unwrap();
-
-    let terms_eq2: Vec<Term> = prob.0[1].as_zero_sum_simp_terms();
-    print_terms(&terms_eq2);
-    println!(" = 0");
-
-    print!("Replacing {} by ", term_to_isolate);
-    print_terms(&replacement_terms);
-    println!(" in equation 2 :");
-
-    let terms_eq2v2: Vec<Term> = terms_eq2
-        .into_iter()
-        .flat_map(|term: Term| {
-            if term == term_to_isolate {
-                replacement_terms.clone()
-            } else {
-                vec![term]
-            }
-        })
+    let mut zero_sum_equations: Vec<Vec<Term>> = prob
+        .0
+        .iter()
+        .map(Equation::as_zero_sum_simp_terms)
         .collect();
 
-    print_terms(&terms_eq2v2);
-    println!(" = 0");
+    zero_sum_equations.iter().for_each(|terms: &Vec<Term>| {
+        print_terms(terms);
+        println!(" = 0")
+    });
 
-    println!("After simplification :");
-    let terms_eq2v3 = cancel_zeros(merge_terms(terms_eq2v2));
-    print_terms(&terms_eq2v3);
-    println!(" = 0");
+    // TODO : Implement UnitTerm::init(&str)
+    let unit_term_to_replace: UnitTerm = zero_sum_equations[0][0].unit_term.clone();
+    let idx_from_eq: usize = 0; // from equation : the equation to replace from
+    let idx_into_eq: usize = 1; // into equation : the equation to replace into
+
+    let coef_from_eq: i32 =
+        get_unit_term_coef(&unit_term_to_replace, &zero_sum_equations[idx_from_eq]).unwrap();
+    let coef_into_eq: i32 =
+        get_unit_term_coef(&unit_term_to_replace, &zero_sum_equations[idx_into_eq]).unwrap();
+    let coef_lcm: i32 = lcm(coef_from_eq, coef_into_eq);
+    println!(
+        "LCM of coefficients of the {} term : {}",
+        Term {
+            scalar: 1,
+            unit_term: unit_term_to_replace.clone(),
+            // Unnecessary clone above
+            // TODO : Implement Display for UnitTerm to avoid this
+        },
+        coef_lcm
+    );
+
+    println!("Scaled equations :");
+
+    if coef_lcm != coef_from_eq {
+        zero_sum_equations[idx_from_eq]
+            .iter_mut()
+            .for_each(|term: &mut Term| term.scale(coef_lcm / coef_from_eq));
+    }
+
+    if coef_lcm != coef_into_eq {
+        zero_sum_equations[idx_into_eq]
+            .iter_mut()
+            .for_each(|term: &mut Term| term.scale(coef_lcm / coef_into_eq));
+    }
+
+    zero_sum_equations.iter().for_each(|terms: &Vec<Term>| {
+        print_terms(terms);
+        println!(" = 0")
+    });
+
+    // changing `replacement_terms` into a function avoided a clone during term replacement
+    let get_replacement_terms = || {
+        as_isolated_from_zero_sum_terms(
+            &zero_sum_equations[idx_from_eq],
+            &Term {
+                scalar: coef_lcm,
+                unit_term: unit_term_to_replace.clone(),
+                // Unnecessary clone above
+                // TODO : Optimise somehow
+            },
+        )
+        .unwrap()
+    };
+
+    zero_sum_equations[idx_into_eq] = cancel_zeros(merge_terms(
+        zero_sum_equations[idx_into_eq]
+            .clone()
+            //TODO : Implement this replacement instruction into a method as the following
+            //       ZeroSumTerms::replace_term(&mut ZeroSumTerms, &Term, &Vec<Term>)
+            //       This will avoid the clone above
+            .into_iter()
+            .flat_map(|term: Term| {
+                if unit_term_partialeq(&term.unit_term, &unit_term_to_replace) {
+                    get_replacement_terms()
+                } else {
+                    vec![term]
+                }
+            })
+            .collect(),
+    ));
+
+    println!("Equations after replacement :");
+
+    zero_sum_equations.iter().for_each(|terms: &Vec<Term>| {
+        print_terms(terms);
+        println!(" = 0")
+    });
 
     // TODO : Implement string to Equation parsing
     // TODO : Implement prob::solve_for(unknown: char)
