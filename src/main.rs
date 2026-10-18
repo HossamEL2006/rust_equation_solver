@@ -437,7 +437,7 @@ fn main() {
     // This system has 3 solutions in C^3, but only one in R^3 that happens to
     // also be in N^3
 
-    println!("Nonlinear system of equations :");
+    println!("# Nonlinear system of equations :");
 
     let num: fn(i32) -> Expr = Expr::init_num;
     let var: fn(char) -> Expr = Expr::init_var;
@@ -461,20 +461,21 @@ fn main() {
     let prob: Problem = Problem(vec![eq1, eq2, eq3]);
 
     println!("{}", prob);
+    // TODO : Wrap all printed math expressions in a LaTeX block $...$
 
     println!("\n***\n");
 
-    println!("Simplified terms of each expression :");
+    println!("# Simplified terms of each expression :");
     for eq in &prob.0 {
         for expr in [&eq.left, &eq.right] {
-            println!("Simplified terms of {} :", expr);
-            println!("{}", expr.as_simp_terms());
+            println!("- Simplified terms of {} :", expr);
+            println!("\t{}", expr.as_simp_terms());
         }
     }
 
     println!("\n***\n");
 
-    println!("Gemini-generated edge cases :");
+    println!("# Gemini-generated edge cases :");
 
     // Gemini generated edge cases
     let edge_cases: [Expr; 8] = [
@@ -494,47 +495,47 @@ fn main() {
     ];
 
     for expr in edge_cases {
-        println!("Simplified terms of {} :", expr);
-        println!("{}", expr.as_simp_terms());
+        println!("- Simplified terms of {} :", expr);
+        println!("\t{}", expr.as_simp_terms());
     }
 
     println!("\n***\n");
 
-    println!("Zero sum equations :");
+    println!("# Zero sum equations :");
     for eq in &prob.0 {
-        println!("Rearranged form of {} :", eq);
+        println!("- Rearranged form of {} :", eq);
         let zero_sum_terms: TermSum<ZeroSum, SimplifiedSum> = eq.as_zero_sum_simp_terms();
-        println!("{}", zero_sum_terms);
+        println!("\t{}", zero_sum_terms);
     }
 
     println!("\n***\n");
 
-    println!("Isolating terms :");
+    println!("# Isolating terms :");
 
     for eq in &prob.0 {
-        println!("Isolating terms of {} :", eq);
+        println!("## Isolating terms of {} :", eq);
 
         let zero_sum_terms: TermSum<ZeroSum, SimplifiedSum> = eq.as_zero_sum_simp_terms();
 
         for term_to_isolate in &zero_sum_terms.0 {
             let rhs_terms: TermSum<ArbitrarySum, SimplifiedSum> =
                 zero_sum_terms.as_isolated(term_to_isolate).unwrap();
-            print!("{} = ", term_to_isolate);
+            print!("- {} = ", term_to_isolate);
             println!("{}", rhs_terms);
         }
     }
 
     println!("\n***\n");
 
-    println!("Manually solving the problem :");
+    println!("# Manually solving the problem :");
 
-    println!("Initial problem :");
+    println!("## Initial problem :");
 
     let mut zero_sum_equations: Vec<TermSum<ZeroSum, SimplifiedSum>> = prob.as_zero_sums();
 
     zero_sum_equations
         .iter()
-        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("{}", zero_sum));
+        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("- {}", zero_sum));
 
     // TODO : Implement UnitTerm::init(&str)
     let unit_term_to_replace: UnitTerm = zero_sum_equations[0].0[0].unit_term.clone();
@@ -548,8 +549,21 @@ fn main() {
         .get_unit_term_coef(&unit_term_to_replace)
         .unwrap();
     let coef_lcm: i32 = lcm(coef_from_eq, coef_into_eq);
+
+    println!("## Simplification choice :");
+
     println!(
-        "LCM of coefficients of the {} term : {}",
+        "- Unit term to simplify : {}",
+        Term {
+            scalar: 1,
+            unit_term: unit_term_to_replace.clone(),
+            // Unnecessary clone above
+            // TODO : Implement Display for UnitTerm to avoid this
+        }
+    );
+
+    println!(
+        "- LCM of coefficients of the {} term : {}",
         Term {
             scalar: 1,
             unit_term: unit_term_to_replace.clone(),
@@ -559,7 +573,7 @@ fn main() {
         coef_lcm
     );
 
-    println!("Scaled equations :");
+    println!("## Scaled equations :");
 
     if coef_lcm != coef_from_eq {
         zero_sum_equations[idx_from_eq]
@@ -577,7 +591,9 @@ fn main() {
 
     zero_sum_equations
         .iter()
-        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("{}", zero_sum));
+        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("- {}", zero_sum));
+
+    println!("## Equation replacement :");
 
     // changing `replacement_terms` into a function avoided a clone during term replacement
     let get_replacement_terms = || {
@@ -612,11 +628,9 @@ fn main() {
     )
     .into_simplified();
 
-    println!("Equations after replacement :");
-
     zero_sum_equations
         .iter()
-        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("{}", zero_sum));
+        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("- {}", zero_sum));
 
     // TODO : Implement string to Equation parsing
     // TODO : Implement prob::solve_for(unknown: char)
