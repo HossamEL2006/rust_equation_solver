@@ -127,6 +127,19 @@ impl Expr {
 #[derive(Clone)]
 struct UnitTerm(HashMap<char, i32>);
 
+impl Display for UnitTerm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (key, val) in &self.0 {
+            if *val == 1 {
+                write!(f, "{}", key)?;
+            } else if *val > 1 {
+                write!(f, "{}^{}", key, val)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl PartialEq for UnitTerm {
     fn eq(&self, other: &Self) -> bool {
         let mut verified_keys: HashSet<char> = HashSet::new();
@@ -220,14 +233,15 @@ impl Display for Term {
             }
         }
 
+        write!(f, "{}", self.unit_term)?;
+
         let mut no_unknowns: bool = true;
-        for (key, val) in &self.unit_term.0 {
-            if *val == 1 {
-                write!(f, "{}", key)?;
+        for val in self.unit_term.0.values() {
+            if *val > 0 {
                 no_unknowns = false;
-            } else if *val > 1 {
-                write!(f, "{}^{}", key, val)?;
-                no_unknowns = false;
+                break;
+            } else if *val < 0 {
+                panic!("Unexpected panic: UnitTerm has negative power");
             }
         }
 
@@ -288,6 +302,7 @@ impl<SimpState> Display for TermSum<ZeroSum, SimpState> {
 }
 
 impl TermSum<ZeroSum, SimplifiedSum> {
+    // TODO : Maybe consider making it an into_isolated
     fn as_isolated(&self, term_to_isolate: &Term) -> Option<TermSum<ArbitrarySum, SimplifiedSum>> {
         let mut other_terms: Vec<Term> = Vec::new();
         let mut isolated_term: Option<Term> = None;
@@ -552,25 +567,11 @@ fn main() {
 
     println!("## Simplification choice :");
 
-    println!(
-        "- Unit term to simplify : {}",
-        Term {
-            scalar: 1,
-            unit_term: unit_term_to_replace.clone(),
-            // Unnecessary clone above
-            // TODO : Implement Display for UnitTerm to avoid this
-        }
-    );
+    println!("- Unit term to simplify : {}", unit_term_to_replace);
 
     println!(
         "- LCM of coefficients of the {} term : {}",
-        Term {
-            scalar: 1,
-            unit_term: unit_term_to_replace.clone(),
-            // Unnecessary clone above
-            // TODO : Implement Display for UnitTerm to avoid this
-        },
-        coef_lcm
+        unit_term_to_replace, coef_lcm
     );
 
     println!("## Scaled equations :");
@@ -601,8 +602,6 @@ fn main() {
             .as_isolated(&Term {
                 scalar: coef_lcm,
                 unit_term: unit_term_to_replace.clone(),
-                // Unnecessary clone above
-                // TODO : Optimise somehow
             })
             .unwrap()
             .0
