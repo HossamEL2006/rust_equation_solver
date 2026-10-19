@@ -8,7 +8,7 @@ use std::{
 
 #[derive(Clone, PartialEq)]
 struct Unknown {
-    name: char,
+    id: u8,
 }
 
 #[derive(Clone, PartialEq)]
@@ -59,7 +59,7 @@ impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Number(n) => write!(f, "{}", n),
-            Variable(unknown) => write!(f, "{}", unknown.name),
+            Variable(unknown) => write!(f, "{}", unknown.id as char),
             Add(exp1, exp2) => write!(f, "({} + {})", exp1, exp2),
             Sub(exp1, exp2) => write!(f, "({} - {})", exp1, exp2),
             Mul(exp1, exp2) => write!(f, "{}*{}", exp1, exp2),
@@ -73,8 +73,8 @@ impl Expr {
         Number(n)
     }
 
-    fn init_var(name: char) -> Expr {
-        Variable(Unknown { name })
+    fn init_var(id: u8) -> Expr {
+        Variable(Unknown { id })
     }
 }
 
@@ -88,7 +88,7 @@ impl Expr {
             }],
             Variable(unknown) => vec![Term {
                 scalar: 1,
-                unit_term: UnitTerm(HashMap::from([(unknown.name, 1)])),
+                unit_term: UnitTerm(HashMap::from([(unknown.id, 1)])),
             }],
             Add(exp1, exp2) => [&**exp1, &**exp2]
                 .into_iter()
@@ -125,15 +125,15 @@ impl Expr {
 }
 
 #[derive(Clone)]
-struct UnitTerm(HashMap<char, i32>);
+struct UnitTerm(HashMap<u8, i32>);
 
 impl Display for UnitTerm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (key, val) in &self.0 {
             if *val == 1 {
-                write!(f, "{}", key)?;
+                write!(f, "{}", *key as char)?;
             } else if *val > 1 {
-                write!(f, "{}^{}", key, val)?;
+                write!(f, "{}^{}", *key as char, val)?;
             }
         }
         Ok(())
@@ -142,7 +142,7 @@ impl Display for UnitTerm {
 
 impl PartialEq for UnitTerm {
     fn eq(&self, other: &Self) -> bool {
-        let mut verified_keys: HashSet<char> = HashSet::new();
+        let mut verified_keys: HashSet<u8> = HashSet::new();
         for key in self.0.keys().chain(other.0.keys()) {
             if !verified_keys.insert(*key) {
                 continue;
@@ -164,7 +164,7 @@ impl ops::Mul for &UnitTerm {
         UnitTerm(
             self.0.iter().chain(&rhs.0).fold(
                 HashMap::new(),
-                |mut unit_term, (key, val): (&char, &i32)| {
+                |mut unit_term, (key, val): (&u8, &i32)| {
                     unit_term
                         .entry(*key)
                         .and_modify(|counter: &mut i32| *counter = ops::Add::add(*counter, *val))
@@ -183,9 +183,7 @@ impl UnitTerm {
         let mut output: [i32; 256] = [0; 256];
         self.0
             .iter()
-            .for_each(|(name, pow)| output[*name as u8 as usize] += pow);
-        // missing error handling for `char as u8`
-        // TODO : Change term.name from `char` to `u8`
+            .for_each(|(id, pow)| output[*id as usize] += pow);
         output
     }
 }
@@ -455,7 +453,7 @@ fn main() {
     println!("# Nonlinear system of equations :");
 
     let num: fn(i32) -> Expr = Expr::init_num;
-    let var: fn(char) -> Expr = Expr::init_var;
+    let var: fn(char) -> Expr = |name: char| Expr::init_var(name as u8);
 
     let eq1: Equation = Equation {
         left: var('x') * (var('y') + var('z')) - var('y') * var('z'),
