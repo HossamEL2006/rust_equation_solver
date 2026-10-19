@@ -198,6 +198,11 @@ impl Term {
     fn scale(&mut self, n: i32) {
         self.scalar *= n
     }
+
+    fn into_scaled(mut self, n: i32) -> Self {
+        self.scale(n);
+        self
+    }
 }
 
 impl ops::Mul for &Term {
@@ -256,11 +261,16 @@ impl PartialEq for Term {
     }
 }
 
+#[derive(Clone)]
 struct ArbitrarySum;
+#[derive(Clone)]
 struct ZeroSum;
+#[derive(Clone)]
 struct SimplifiedSum;
+#[derive(Clone)]
 struct UnsimplifiedSum;
 
+#[derive(Clone)]
 struct TermSum<SumState, SimpState>(Vec<Term>, PhantomData<(SumState, SimpState)>);
 
 impl<SumState> TermSum<SumState, UnsimplifiedSum> {
@@ -300,31 +310,24 @@ impl<SimpState> Display for TermSum<ZeroSum, SimpState> {
 }
 
 impl TermSum<ZeroSum, SimplifiedSum> {
-    // TODO : Maybe consider making it an into_isolated
-    fn as_isolated(&self, term_to_isolate: &Term) -> Option<TermSum<ArbitrarySum, SimplifiedSum>> {
+    fn into_isolated(
+        self,
+        unit_term_to_isolate: &UnitTerm,
+    ) -> Option<(Term, TermSum<ArbitrarySum, SimplifiedSum>)> {
         let mut other_terms: Vec<Term> = Vec::new();
         let mut isolated_term: Option<Term> = None;
-        let mut multiplying_factor: i32 = 1;
 
-        for term in &self.0 {
-            if term_to_isolate.unit_term != term.unit_term {
-                other_terms.push(term.clone());
+        for term in self.0 {
+            if *unit_term_to_isolate != term.unit_term {
+                other_terms.push(term.into_scaled(-1));
             } else if isolated_term.is_none() {
-                if term_to_isolate.scalar % term.scalar != 0 {
-                    return None;
-                }
-                multiplying_factor = term_to_isolate.scalar / term.scalar;
-                isolated_term = Some(term.clone());
+                isolated_term = Some(term);
             } else {
-                panic!("Unexpected panic: TermSum({}) should be simplified", self);
+                panic!("Unexpected panic: A simplified TermSum was expected as an argument");
             }
         }
 
-        other_terms
-            .iter_mut()
-            .for_each(|term: &mut Term| term.scale(-multiplying_factor));
-
-        isolated_term.map(|_| TermSum(other_terms, PhantomData))
+        isolated_term.map(|term: Term| (term, TermSum(other_terms, PhantomData)))
     }
 }
 
@@ -475,6 +478,7 @@ fn main() {
 
     println!("{}", prob);
     // TODO : Wrap all printed math expressions in a LaTeX block $...$
+    // TODO : Add manual line breaks so the markdown output displays correctly on github
 
     println!("\n***\n");
 
@@ -530,11 +534,13 @@ fn main() {
 
         let zero_sum_terms: TermSum<ZeroSum, SimplifiedSum> = eq.as_zero_sum_simp_terms();
 
-        for term_to_isolate in &zero_sum_terms.0 {
-            let rhs_terms: TermSum<ArbitrarySum, SimplifiedSum> =
-                zero_sum_terms.as_isolated(term_to_isolate).unwrap();
-            print!("- {} = ", term_to_isolate);
-            println!("{}", rhs_terms);
+        for unit_term_to_isolate in zero_sum_terms.0.iter().map(|term: &Term| &term.unit_term) {
+            let (isolated_term, rhs_terms): (Term, TermSum<ArbitrarySum, SimplifiedSum>) =
+                zero_sum_terms
+                    .clone()
+                    .into_isolated(unit_term_to_isolate)
+                    .unwrap();
+            println!("- {} = {}", isolated_term, rhs_terms);
         }
     }
 
@@ -594,17 +600,6 @@ fn main() {
 
     println!("## Equation replacement :");
 
-    // changing `replacement_terms` into a function avoided a clone during term replacement
-    let get_replacement_terms = || {
-        zero_sum_equations[idx_from_eq]
-            .as_isolated(&Term {
-                scalar: coef_lcm,
-                unit_term: unit_term_to_replace.clone(),
-            })
-            .unwrap()
-            .0
-    };
-
     zero_sum_equations[idx_into_eq] = TermSum(
         zero_sum_equations[idx_into_eq]
             .0
@@ -615,7 +610,12 @@ fn main() {
             .into_iter()
             .flat_map(|term: Term| {
                 if term.unit_term == unit_term_to_replace {
-                    get_replacement_terms()
+                    zero_sum_equations[idx_from_eq]
+                        .clone()
+                        .into_isolated(&unit_term_to_replace)
+                        .unwrap()
+                        .1
+                        .0
                 } else {
                     vec![term]
                 }
