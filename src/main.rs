@@ -1,7 +1,7 @@
 use num::integer::lcm;
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Debug, Display},
     marker::PhantomData,
     ops, vec,
 };
@@ -178,13 +178,40 @@ impl ops::Mul for &UnitTerm {
     }
 }
 
+#[derive(PartialEq, Eq, Hash)]
+struct PowerArray([i32; 256]);
+
+impl Display for PowerArray {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_unit_term())
+    }
+}
+
+impl Debug for PowerArray {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 impl UnitTerm {
-    fn as_power_array(&self) -> [i32; 256] {
+    fn as_power_array(&self) -> PowerArray {
         let mut output: [i32; 256] = [0; 256];
         self.0
             .iter()
             .for_each(|(id, pow)| output[*id as usize] += pow);
-        output
+        PowerArray(output)
+    }
+}
+
+// TODO : Make `PowerArray` the only `UnitTerm` representation to avoid unnecessary O(n) conversions
+impl PowerArray {
+    fn as_unit_term(&self) -> UnitTerm {
+        let mut output = HashMap::new();
+        for (i, name) in self.0.iter().enumerate() {
+            output.insert(i as u8, *name);
+        }
+
+        UnitTerm(output)
     }
 }
 
@@ -339,12 +366,12 @@ impl<SumState> TermSum<SumState, UnsimplifiedSum> {
             let mut counter: usize = 0;
 
             for term in terms {
-                let term_arr: [i32; 256] = term.unit_term.as_power_array();
-                if let Some(idx) = term_indicies_map.get(&term_arr) {
+                let term_arr: PowerArray = term.unit_term.as_power_array();
+                if let Some(idx) = term_indicies_map.get(&term_arr.0) {
                     simplified_terms[*idx].scalar += term.scalar;
                     // error should not occur in theory
                 } else {
-                    term_indicies_map.insert(term_arr, counter);
+                    term_indicies_map.insert(term_arr.0, counter);
                     counter += 1;
 
                     simplified_terms.push(term);
@@ -419,18 +446,9 @@ impl Display for Equation {
     }
 }
 
-struct Problem(Vec<Equation>);
+struct SystemOfEquations(Vec<Equation>);
 
-impl Problem {
-    fn as_zero_sums(&self) -> Vec<TermSum<ZeroSum, SimplifiedSum>> {
-        self.0
-            .iter()
-            .map(Equation::as_zero_sum_simp_terms)
-            .collect()
-    }
-}
-
-impl Display for Problem {
+impl Display for SystemOfEquations {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut fst_loop: bool = true;
         for eq in &self.0 {
@@ -442,6 +460,45 @@ impl Display for Problem {
             write!(f, "{}", eq)?;
         }
         Ok(())
+    }
+}
+
+impl SystemOfEquations {
+    fn as_zero_sums(&self) -> SystemOfZeroSums<SimplifiedSum> {
+        SystemOfZeroSums(
+            self.0
+                .iter()
+                .map(Equation::as_zero_sum_simp_terms)
+                .collect(),
+        )
+    }
+}
+
+struct SystemOfZeroSums<SimpState>(Vec<TermSum<ZeroSum, SimpState>>);
+
+impl<SimpState> Display for SystemOfZeroSums<SimpState> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.iter().enumerate().try_for_each(
+            |(i, zero_sum): (usize, &TermSum<ZeroSum, SimpState>)| {
+                write!(f, "{}* {}", if i != 0 { "\n" } else { "" }, zero_sum)
+            },
+        )
+    }
+}
+
+impl SystemOfZeroSums<SimplifiedSum> {
+    fn unit_terms_list(&self) -> Vec<HashSet<PowerArray>> {
+        self.0
+            .iter()
+            .map(|term_sum: &TermSum<ZeroSum, SimplifiedSum>| {
+                term_sum
+                    .0
+                    .iter()
+                    .map(|term: &Term| term.unit_term.as_power_array())
+                    .filter(|arr| arr.0 != [0; 256])
+                    .collect()
+            })
+            .collect()
     }
 }
 
@@ -474,16 +531,16 @@ fn main() {
         right: var('x') * var('z') - num(2) * var('x') - num(1),
     };
 
-    let prob: Problem = Problem(vec![eq1, eq2, eq3]);
+    let system: SystemOfEquations = SystemOfEquations(vec![eq1, eq2, eq3]);
 
-    println!("{}", prob);
+    println!("{}", system);
     // TODO : Wrap all printed math expressions in a LaTeX block $...$
     // TODO : Add manual line breaks so the markdown output displays correctly on github
 
     println!("\n***\n");
 
     println!("# Simplified terms of each expression :");
-    for eq in &prob.0 {
+    for eq in &system.0 {
         for expr in [&eq.left, &eq.right] {
             println!("- Simplified terms of {} :", expr);
             println!("\t{}", expr.as_simp_terms());
@@ -519,7 +576,7 @@ fn main() {
     println!("\n***\n");
 
     println!("# Zero sum equations :");
-    for eq in &prob.0 {
+    for eq in &system.0 {
         println!("- Rearranged form of {} :", eq);
         let zero_sum_terms: TermSum<ZeroSum, SimplifiedSum> = eq.as_zero_sum_simp_terms();
         println!("\t{}", zero_sum_terms);
@@ -529,7 +586,7 @@ fn main() {
 
     println!("# Isolating terms :");
 
-    for eq in &prob.0 {
+    for eq in &system.0 {
         println!("## Isolating terms of {} :", eq);
 
         let zero_sum_terms: TermSum<ZeroSum, SimplifiedSum> = eq.as_zero_sum_simp_terms();
@@ -540,7 +597,7 @@ fn main() {
                     .clone()
                     .into_isolated(unit_term_to_isolate)
                     .unwrap();
-            println!("- {} = {}", isolated_term, rhs_terms);
+            println!("* {} = {}", isolated_term, rhs_terms);
         }
     }
 
@@ -550,21 +607,23 @@ fn main() {
 
     println!("## Initial problem :");
 
-    let mut zero_sum_equations: Vec<TermSum<ZeroSum, SimplifiedSum>> = prob.as_zero_sums();
+    let mut zero_sum_equations: SystemOfZeroSums<SimplifiedSum> = system.as_zero_sums();
 
-    zero_sum_equations
-        .iter()
-        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("- {}", zero_sum));
+    println!("{}", zero_sum_equations);
+    println!(
+        "Unit terms in each equation : {:?}",
+        zero_sum_equations.unit_terms_list()
+    );
 
     // TODO : Implement UnitTerm::init(&str)
-    let unit_term_to_replace: UnitTerm = zero_sum_equations[0].0[0].unit_term.clone();
+    let unit_term_to_replace: UnitTerm = zero_sum_equations.0[0].0[0].unit_term.clone();
     let idx_from_eq: usize = 0; // from equation : the equation to replace from
     let idx_into_eq: usize = 1; // into equation : the equation to replace into
 
-    let coef_from_eq: i32 = zero_sum_equations[idx_from_eq]
+    let coef_from_eq: i32 = zero_sum_equations.0[idx_from_eq]
         .get_unit_term_coef(&unit_term_to_replace)
         .unwrap();
-    let coef_into_eq: i32 = zero_sum_equations[idx_into_eq]
+    let coef_into_eq: i32 = zero_sum_equations.0[idx_into_eq]
         .get_unit_term_coef(&unit_term_to_replace)
         .unwrap();
     let coef_lcm: i32 = lcm(coef_from_eq, coef_into_eq);
@@ -580,37 +639,40 @@ fn main() {
 
     println!("## Scaled equations :");
 
+    // TODO : Implement TermSum scaling as a seperate method
     if coef_lcm != coef_from_eq {
-        zero_sum_equations[idx_from_eq]
+        zero_sum_equations.0[idx_from_eq]
             .0
             .iter_mut()
             .for_each(|term: &mut Term| term.scale(coef_lcm / coef_from_eq));
     }
 
     if coef_lcm != coef_into_eq {
-        zero_sum_equations[idx_into_eq]
+        zero_sum_equations.0[idx_into_eq]
             .0
             .iter_mut()
             .for_each(|term: &mut Term| term.scale(coef_lcm / coef_into_eq));
     }
 
-    zero_sum_equations
-        .iter()
-        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("- {}", zero_sum));
+    println!("{}", zero_sum_equations);
+    println!(
+        "Unit terms in each equation : {:?}",
+        zero_sum_equations.unit_terms_list()
+    );
 
     println!("## Equation replacement :");
 
-    zero_sum_equations[idx_into_eq] = TermSum(
-        zero_sum_equations[idx_into_eq]
+    // TODO : Implement this replacement instruction into a seperate method as the following
+    //        ZeroSumTerms::replace_term(&mut self, &Term, &Vec<Term>)
+    //        This will avoid the unnecessary clone
+    zero_sum_equations.0[idx_into_eq] = TermSum(
+        zero_sum_equations.0[idx_into_eq]
             .0
             .clone()
-            //TODO : Implement this replacement instruction into a method as the following
-            //       ZeroSumTerms::replace_term(&mut ZeroSumTerms, &Term, &Vec<Term>)
-            //       This will avoid the clone above
             .into_iter()
             .flat_map(|term: Term| {
                 if term.unit_term == unit_term_to_replace {
-                    zero_sum_equations[idx_from_eq]
+                    zero_sum_equations.0[idx_from_eq]
                         .clone()
                         .into_isolated(&unit_term_to_replace)
                         .unwrap()
@@ -625,10 +687,12 @@ fn main() {
     )
     .into_simplified();
 
-    zero_sum_equations
-        .iter()
-        .for_each(|zero_sum: &TermSum<ZeroSum, SimplifiedSum>| println!("- {}", zero_sum));
+    println!("{}", zero_sum_equations);
+    println!(
+        "Unit terms in each equation : {:?}",
+        zero_sum_equations.unit_terms_list()
+    );
 
     // TODO : Implement string to Equation parsing
-    // TODO : Implement prob::solve_for(unknown: char)
+    // TODO : Implement system::solve_for(unknown: char)
 }
