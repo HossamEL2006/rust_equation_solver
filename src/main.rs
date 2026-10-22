@@ -84,11 +84,15 @@ impl Expr {
         let terms: Vec<Term> = match self {
             Number(n) => vec![Term {
                 scalar: *n,
-                unit_term: UnitTerm(HashMap::new()),
+                unit_term: UnitTerm([0; 256]),
             }],
             Variable(unknown) => vec![Term {
                 scalar: 1,
-                unit_term: UnitTerm(HashMap::from([(unknown.id, 1)])),
+                unit_term: {
+                    let mut arr = [0; 256];
+                    arr[unknown.id as usize] = 1;
+                    UnitTerm(arr)
+                },
             }],
             Add(exp1, exp2) => [&**exp1, &**exp2]
                 .into_iter()
@@ -124,36 +128,34 @@ impl Expr {
     }
 }
 
-#[derive(Clone)]
-struct UnitTerm(HashMap<u8, i32>);
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct UnitTerm([i32; 256]);
 
 impl Display for UnitTerm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (key, val) in &self.0 {
-            if *val == 1 {
-                write!(f, "{}", *key as char)?;
-            } else if *val > 1 {
-                write!(f, "{}^{}", *key as char, val)?;
+        for id in 0..=255_u8 {
+            let pow: i32 = self.0[id as usize];
+            if pow == 1 {
+                write!(f, "{}", id as char)?;
+            } else if pow > 1 {
+                write!(f, "{}^{}", id as char, pow)?;
             }
         }
         Ok(())
     }
 }
 
-impl PartialEq for UnitTerm {
-    fn eq(&self, other: &Self) -> bool {
-        let mut verified_keys: HashSet<u8> = HashSet::new();
-        for key in self.0.keys().chain(other.0.keys()) {
-            if !verified_keys.insert(*key) {
-                continue;
-            }
-            match (self.0.get(key), other.0.get(key)) {
-                (None, Some(n)) | (Some(n), None) if *n != 0 => return false,
-                (Some(n), Some(m)) if *n != *m => return false,
-                _ => (),
-            }
-        }
-        true
+impl Debug for UnitTerm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl ops::Mul for UnitTerm {
+    type Output = UnitTerm;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        &self * &rhs
     }
 }
 
@@ -162,56 +164,16 @@ impl ops::Mul for &UnitTerm {
 
     fn mul(self, rhs: Self) -> Self::Output {
         UnitTerm(
-            self.0.iter().chain(&rhs.0).fold(
-                HashMap::new(),
-                |mut unit_term, (key, val): (&u8, &i32)| {
-                    unit_term
-                        .entry(*key)
-                        .and_modify(|counter: &mut i32| *counter = ops::Add::add(*counter, *val))
-                        /* used `ops::Add::add` instead of `+` to avoid clippy's
-                         * suspicious_arithmetic_impl warning */
-                        .or_insert(*val);
-                    unit_term
-                },
-            ), // Source: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.entry
+            self.0
+                .into_iter()
+                .zip(rhs.0)
+                .map(|(a, b)| a + b)
+                .enumerate()
+                .fold([0; 256], |mut arr: [i32; 256], (id, pow): (usize, i32)| {
+                    arr[id] = pow;
+                    arr
+                }),
         )
-    }
-}
-
-#[derive(PartialEq, Eq, Hash)]
-struct PowerArray([i32; 256]);
-
-impl Display for PowerArray {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_unit_term())
-    }
-}
-
-impl Debug for PowerArray {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
-impl UnitTerm {
-    fn as_power_array(&self) -> PowerArray {
-        let mut output: [i32; 256] = [0; 256];
-        self.0
-            .iter()
-            .for_each(|(id, pow)| output[*id as usize] += pow);
-        PowerArray(output)
-    }
-}
-
-// TODO : Make `PowerArray` the only `UnitTerm` representation to avoid unnecessary O(n) conversions
-impl PowerArray {
-    fn as_unit_term(&self) -> UnitTerm {
-        let mut output = HashMap::new();
-        for (i, name) in self.0.iter().enumerate() {
-            output.insert(i as u8, *name);
-        }
-
-        UnitTerm(output)
     }
 }
 
@@ -226,6 +188,8 @@ impl Term {
         self.scalar *= n
     }
 
+    // TODO : Implement Mul<Term> for i32 to simplify this function into a simple mul operation
+    // TODO : Implement Neg for Term too
     fn into_scaled(mut self, n: i32) -> Self {
         self.scale(n);
         self
@@ -266,11 +230,11 @@ impl Display for Term {
         write!(f, "{}", self.unit_term)?;
 
         let mut no_unknowns: bool = true;
-        for val in self.unit_term.0.values() {
-            if *val > 0 {
+        for pow in self.unit_term.0 {
+            if pow > 0 {
                 no_unknowns = false;
                 break;
-            } else if *val < 0 {
+            } else if pow < 0 {
                 panic!("Unexpected panic: UnitTerm has negative power");
             }
         }
@@ -360,18 +324,18 @@ impl TermSum<ZeroSum, SimplifiedSum> {
 
 impl<SumState> TermSum<SumState, UnsimplifiedSum> {
     fn into_simplified(self) -> TermSum<SumState, SimplifiedSum> {
-        fn merge_terms(terms: Vec<Term>) -> Vec<Term> {
-            let mut term_indicies_map: HashMap<[i32; 256], usize> = HashMap::new();
+        fn into_merged_terms(terms: Vec<Term>) -> Vec<Term> {
+            let mut unit_term_indicies: HashMap<[i32; 256], usize> = HashMap::new();
             let mut simplified_terms: Vec<Term> = Vec::new();
             let mut counter: usize = 0;
 
             for term in terms {
-                let term_arr: PowerArray = term.unit_term.as_power_array();
-                if let Some(idx) = term_indicies_map.get(&term_arr.0) {
+                let unit_term: &UnitTerm = &term.unit_term;
+                if let Some(idx) = unit_term_indicies.get(&unit_term.0) {
                     simplified_terms[*idx].scalar += term.scalar;
                     // error should not occur in theory
                 } else {
-                    term_indicies_map.insert(term_arr.0, counter);
+                    unit_term_indicies.insert(unit_term.0, counter);
                     counter += 1;
 
                     simplified_terms.push(term);
@@ -381,7 +345,7 @@ impl<SumState> TermSum<SumState, UnsimplifiedSum> {
             simplified_terms
         }
 
-        fn cancel_zeros(terms: Vec<Term>) -> Vec<Term> {
+        fn into_canceled_zeros(terms: Vec<Term>) -> Vec<Term> {
             let output: Vec<Term> = terms
                 .into_iter()
                 .filter(|term: &Term| term.scalar != 0)
@@ -389,14 +353,14 @@ impl<SumState> TermSum<SumState, UnsimplifiedSum> {
             if output.is_empty() {
                 vec![Term {
                     scalar: 0,
-                    unit_term: UnitTerm(HashMap::new()),
+                    unit_term: UnitTerm([0; 256]),
                 }]
             } else {
                 output
             }
         }
 
-        TermSum(cancel_zeros(merge_terms(self.0)), PhantomData)
+        TermSum(into_canceled_zeros(into_merged_terms(self.0)), PhantomData)
     }
 }
 
@@ -487,15 +451,16 @@ impl<SimpState> Display for SystemOfZeroSums<SimpState> {
 }
 
 impl SystemOfZeroSums<SimplifiedSum> {
-    fn unit_terms_list(&self) -> Vec<HashSet<PowerArray>> {
+    fn unit_terms_list(&self) -> Vec<HashSet<UnitTerm>> {
         self.0
             .iter()
-            .map(|term_sum: &TermSum<ZeroSum, SimplifiedSum>| {
-                term_sum
+            .map(|term_sum_eq: &TermSum<ZeroSum, SimplifiedSum>| {
+                term_sum_eq
                     .0
                     .iter()
-                    .map(|term: &Term| term.unit_term.as_power_array())
+                    .map(|term: &Term| &term.unit_term)
                     .filter(|arr| arr.0 != [0; 256])
+                    .cloned()
                     .collect()
             })
             .collect()
